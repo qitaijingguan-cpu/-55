@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>九州オービスマップ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:'Hiragino Sans','Noto Sans JP',sans-serif}
+#map{position:absolute;inset:0;background:#222}
+#topbar{position:fixed;top:0;left:0;right:0;z-index:1000;background:#111c2e;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+#topbar h1{font-size:15px;font-weight:700}
+#btnGps{background:#2f80ed;color:#fff;border:0;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer}
+#btnGps.on{background:#1d9a4a}
+#btnVoice{background:#555;color:#fff;border:0;border-radius:6px;padding:8px 10px;font-size:13px;cursor:pointer}
+#btnVoice.on{background:#b3791a}
+#gpsStat{font-size:11px;color:#9ab}
+#hud{position:fixed;top:56px;left:10px;z-index:1000;background:rgba(10,20,35,.88);color:#fff;border-radius:10px;padding:10px 14px;min-width:190px;backdrop-filter:blur(4px);display:none}
+#hud .spd{font-size:38px;font-weight:800;line-height:1}
+#hud .spd small{font-size:13px;font-weight:400;color:#9ab}
+#hud .row{font-size:12px;margin-top:4px;color:#cdd}
+#hud .near{font-size:13px;margin-top:6px;font-weight:700}
+#hud.warn1 .near{color:#ffd24a}#hud.warn2 .near{color:#ff5252}
+#alertBar{position:fixed;top:110px;left:50%;transform:translateX(-50%);z-index:1200;background:#d32f2f;color:#fff;font-weight:800;font-size:17px;padding:12px 26px;border-radius:30px;display:none;box-shadow:0 0 24px rgba(255,0,0,.7);text-align:center}
+#list{position:fixed;right:0;top:56px;bottom:0;width:290px;z-index:900;background:rgba(12,22,38,.94);color:#eee;overflow-y:auto;transform:translateX(100%);transition:.25s;font-size:12px}
+#list.open{transform:none}
+#list header{padding:10px 12px;font-weight:700;border-bottom:1px solid #2a3a55;display:flex;justify-content:space-between;align-items:center}
+#list header button{background:none;border:0;color:#aaa;font-size:16px;cursor:pointer}
+#list ul{list-style:none}
+#list li{padding:9px 12px;border-bottom:1px solid #22314a;cursor:pointer;display:flex;justify-content:space-between;gap:6px}
+#list li:hover{background:#1b2c47}
+#list .d{font-weight:800;white-space:nowrap}
+#toggleList{position:fixed;right:10px;top:64px;z-index:950;background:#111c2e;color:#fff;border:1px solid #2a3a55;border-radius:8px;padding:8px 10px;font-size:12px;cursor:pointer}
+#note{position:fixed;bottom:0;left:0;right:0;z-index:800;background:rgba(0,0,0,.72);color:#bbb;font-size:10px;padding:5px 10px;pointer-events:none}
+.ori{font-weight:700}
+.ov{color:#ffb340}.ov2{color:#ff5252}
+@media(max-width:600px){#list{width:80vw}}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <h1>📷 九州オービスマップ</h1>
+  <button id="btnGps">▶ 位置情報を開始</button>
+  <button id="btnVoice" title="音声+警告音">🔇</button>
+  <span id="gpsStat">位置情報: 未取得</span>
+</div>
+<div id="hud">
+  <div class="spd"><span id="spd">--</span> <small>km/h</small></div>
+  <div class="row">精度 ±<span id="acc">--</span>m / 方位 <span id="hdg">--</span></div>
+  <div class="near">最寄り: <span id="near">--</span></div>
+</div>
+<div id="alertBar"></div>
+<button id="toggleList">📋 一覧</button>
+<div id="list"><header>オービス一覧 <button id="closeList">✕</button></header><ul id="lst"></ul></div>
+<div id="map"></div>
+<div id="note">データ出典: 有志オービス一覧(中四国・九州沖縄)・オービスガイド等の公開情報(2026年時点)。「撤去報告」「近似」マークは要注意。移動式・新設は未収録。運転中は安全運転を。</div>
+<script>
+const ORBIS=[
+{n:"九州道2.0KP ループコイル",p:"福岡",lat:33.9020556,lng:130.9743056,dir:0,d:"上り(下関方面)",t:"ループコイル",lim:100,note:"門司区伊川 新門司ICと門司ICの間"},
+{n:"九州道38.4KP ループコイル",p:"福岡",lat:33.7644444,lng:130.6745833,dir:30,d:"上り+下り(両方向)",t:"ループコイル",lim:100,note:"鞍手町八尋"},
+{n:"九州道70.6KP レーダ",p:"福岡",lat:33.6082222,lng:130.4908056,dir:315,d:"北西方向",t:"レーダ",lim:100,note:"粕屋町酒殿"},
+{n:"R10 ループコイル",p:"福岡",lat:33.6295556,lng:131.0822222,dir:120,d:"東行き",t:"ループコイル",lim:60,note:"築上郡椎田町有安"},
+{n:"R200 Hシステム",p:"福岡",lat:33.6599444,lng:130.7090833,dir:225,d:"下り",t:"Hシステム",lim:60,note:"飯塚市鯰田",rm:"撤去報告あり(2020)"},
+{n:"R3 Hシステム",p:"福岡",lat:33.7616028,lng:130.5098083,dir:225,d:"南西行き",t:"Hシステム",lim:60,note:"福津市福間町津丸",rm:"撤去報告あり(2020)"},
+{n:"R200 Hシステム",p:"福岡",lat:33.5574444,lng:130.6472222,dir:45,d:"上り",t:"Hシステム",lim:60,note:"飯塚市筑穂阿恵",rm:"撤去報告あり(2020)"},
+{n:"九州道70.9KP 半固定式",p:"福岡",lat:33.572,lng:130.505,dir:180,d:"下り(鳥栖JCT方面)",t:"半固定式",lim:100,note:"福岡ICと須恵スマートIC間",ap:1},
+{n:"九州道115.4KP ループコイル",p:"福岡",lat:33.209,lng:130.533,dir:180,d:"下り(熊本方面)",t:"ループコイル",lim:100,note:"八女市広川 広川SAと八女ICの間",ap:1},
+{n:"R10 Hシステム",p:"大分",lat:33.3613889,lng:131.5115556,dir:225,d:"別府方面",t:"Hシステム",lim:60,note:"日出町豊岡 太田信号800m先"},
+{n:"R10 Hシステム",p:"大分",lat:33.5490833,lng:131.2221111,dir:90,d:"宇佐方面",t:"Hシステム",lim:60,note:"中津市加来 八面山信号600m先"},
+{n:"R206 Hシステム",p:"長崎",lat:32.8171944,lng:129.8502222,dir:45,d:"両方向(2基)",t:"Hシステム",lim:60,note:"時津町元村郷"},
+{n:"R34 Hシステム",p:"長崎",lat:32.9150639,lng:129.9518667,dir:350,d:"両方向(2基)",t:"Hシステム",lim:60,note:"大村市協和町"},
+{n:"県11 Hシステム",p:"長崎",lat:33.17825,lng:129.6701944,dir:0,d:"北行き",t:"Hシステム",lim:50,note:"佐世保市川下町"},
+{n:"R202 Hシステム",p:"佐賀",lat:33.4338056,lng:130.0258056,dir:270,d:"唐津市内方向",t:"Hシステム",lim:60,note:"唐津市浜玉町横田下"},
+{n:"R34 Hシステム",p:"佐賀",lat:33.2631389,lng:130.2559444,dir:90,d:"東行き",t:"Hシステム",lim:60,note:"佐賀市鍋島町江里"},
+{n:"九州道100.6KP Hシステム",p:"佐賀",lat:33.3685889,lng:130.5430833,dir:160,d:"下り",t:"Hシステム",lim:100,note:"鳥栖市酒井東町 鳥栖JCT付近"},
+{n:"長崎道9.7KP ループコイル",p:"佐賀",lat:33.3618056,lng:130.4520278,dir:45,d:"上り(鳥栖JCT方面)",t:"ループコイル",lim:100,note:"みやき町簑原 東脊振ICと山浦PA間"},
+{n:"九州道161.2KP レーダ",p:"熊本",lat:32.9005833,lng:130.7186944,dir:180,d:"下り",t:"レーダ",lim:100,note:"植木町小野"},
+{n:"九州道149.6KP 半固定式",p:"熊本",lat:32.884,lng:130.703,dir:0,d:"上り(福岡方面)",t:"半固定式",lim:100,note:"和水町用木 植木IC〜菊水IC間",ap:1},
+{n:"九州道211.4KP 半固定式",p:"熊本",lat:32.552,lng:130.622,dir:180,d:"下り(鹿児島方面)",t:"半固定式",lim:100,note:"八代市興善寺町 宮原SA〜八代IC間",ap:1},
+{n:"九州道191.7KP ループコイル",p:"熊本",lat:32.6733333,lng:130.7254167,dir:45,d:"上り(福岡方面)",t:"ループコイル",lim:100,note:"宇城市松橋町古保山 松橋ICと緑川PA間"},
+{n:"R10 Hシステム",p:"宮崎",lat:32.0917167,lng:131.51725,dir:20,d:"両方向(2基)",t:"Hシステム",lim:60,note:"川南町平田"},
+{n:"R10 Hシステム",p:"宮崎",lat:32.4513611,lng:131.645,dir:225,d:"南西行き",t:"Hシステム",lim:60,note:"日向市梶木町"},
+{n:"R10 Hシステム",p:"宮崎",lat:32.4313611,lng:131.6300278,dir:0,d:"北行き",t:"Hシステム",lim:60,note:"日向市亀崎"},
+{n:"R220 Hシステム",p:"宮崎",lat:31.78825,lng:131.4731944,dir:0,d:"両方向(2基)",t:"Hシステム",lim:60,note:"宮崎市折生迫(宮崎IC南)"},
+{n:"宮崎道36.9KP レーダ",p:"宮崎",lat:31.8601111,lng:131.0535556,dir:135,d:"南東方向",t:"レーダ",lim:100,note:"高崎町大牟田"},
+{n:"R3 Hシステム",p:"鹿児島",lat:31.6508056,lng:130.4241667,dir:90,d:"東行き",t:"Hシステム",lim:60,note:"日置市伊集院町麦生田"}
+];
+// 熊本の一般道(座標未確認・参考情報): R3八代市二見本町LH / R3植木町宮原LH上下 / R208植木町鈴麦(座標要確認)
+
+const map=L.map('map',{zoomControl:false}).setView([32.9,130.8],8);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+L.control.zoom({position:'bottomright'}).addTo(map);
+
+const icons={};
+function iconFor(o){
+  const key=(o.rm?'rm':o.t==='半固定式'?'sf':'fix');
+  if(!icons[key]){
+    const c=key==='rm'?'#888':key==='sf'?'#e6a300':'#d32f2f';
+    icons[key]=L.divIcon({className:'',iconSize:[26,26],html:`<div style="width:26px;height:26px;border-radius:50%;background:${c};border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px">📷</div>`});
+  }
+  return icons[key];
+}
+ORBIS.forEach((o,i)=>{
+  o.marker=L.marker([o.lat,o.lng],{icon:iconFor(o)}).addTo(map);
+  const arrow=(o.dir+180)%360; // 撮影方向(進行方向)へ矢印
+  const rad=o.dir*Math.PI/180, dx=Math.sin(rad)*0.0012, dy=Math.cos(rad)*0.0012;
+  o.arrow=L.polyline([[o.lat,o.lng],[o.lat+dy,o.lng+dx]],{color:'#ffd24a',weight:3,opacity:.9}).addTo(map);
+  o.marker.bindPopup(`<b>${o.n}</b><br>${o.p}県<br>方式:${o.t} / 制限:${o.lim}km/h<br>監視方向:${o.d}<br>${o.note}${o.ap?'<br><span class="ov">⚠ 位置は近似値</span>':''}${o.rm?'<br><span class="ov">⚠ '+o.rm+'</span>':''}`);
+});
+const myIcon=L.divIcon({className:'',iconSize:[20,20],html:'<div style="width:20px;height:20px;border-radius:50%;background:#1e88ff;border:3px solid #fff;box-shadow:0 0 10px #1e88ff"></div>'});
+let me=null;
+function haversine(a,b,c,d){const R=6371000,r=x=>x*Math.PI/180,dLa=r(c-a),dLo=r(d-b),s=Math.sin(dLa/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(s))}
+
+// HUD/警告
+const hud=document.getElementById('hud'),alertBar=document.getElementById('alertBar');
+let watchId=null,lastPos=null,voiceOn=false,warned=new Set();
+function beep(f=880){try{const ctx=beep.ctx||(beep.ctx=new (window.AudioContext||window.webkitAudioContext)());const o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=f;o.type='square';o.connect(g);g.connect(ctx.destination);g.gain.setValueAtTime(.25,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.18);o.start();o.stop(ctx.currentTime+.2)}catch(e){}}
+function speak(t){if(voiceOn&&window.speechSynthesis){const u=new SpeechSynthesisUtterance(t);u.lang='ja-JP';u.rate=1.1;speechSynthesis.speak(u)}}
+function vibrate(p){if(voiceOn&&navigator.vibrate)navigator.vibrate(p)}
+
+function onPos(p){
+  lastPos=p;
+  const la=p.coords.latitude,ln=p.coords.longitude,acc=p.coords.accuracy||0;
+  let spd=p.coords.speed; // m/s
+  if((spd==null||spd<0)&&window._prev){const t=(p.timestamp-window._prev.t)/1000;if(t>0.5)spd=haversine(window._prev.la,window._prev.ln,la,ln)/t}
+  window._prev={la,ln,t:p.timestamp};
+  const kmh=spd!=null&&spd>=0?spd*3.6:null;
+  document.getElementById('gpsStat').textContent=`位置情報: 取得中(±${Math.round(acc)}m)`;
+  hud.style.display='block';
+  document.getElementById('acc').textContent=Math.round(acc);
+  document.getElementById('spd').textContent=kmh!=null?kmh.toFixed(0):'--';
+  if(p.coords.heading!=null&&p.coords.heading>=0)document.getElementById('hdg').textContent=Math.round(p.coords.heading)+'°';
+  if(!me)me=L.marker([la,ln],{icon:myIcon}).addTo(map).bindPopup('現在地');else me.setLatLng([la,ln]);
+
+  // 最寄りオービス
+  let best=null,bd=1e12;
+  ORBIS.forEach(o=>{const d=haversine(la,ln,o.lat,o.lng);o.d=d;if(d<bd){bd=d;best=o}});
+  document.getElementById('near').textContent=best?`${(bd/1000).toFixed(2)}km ${best.n}`:'--';
+  // 一覧更新
+  const li=[...ORBIS].sort((a,b)=>a.d-b.d).slice(0,10).map(o=>{
+    const cls=o.d<500?'ov2':o.d<1500?'ov':'';
+    return `<li data-i="${ORBIS.indexOf(o)}"><span>${o.n}</span><span class="d ${cls}">${o.d<1000?Math.round(o.d)+'m':(o.d/1000).toFixed(1)+'km'}</span></li>`
+  }).join('');
+  document.getElementById('lst').innerHTML=li;
+
+  // 警告
+  let al=null;
+  ORBIS.forEach(o=>{
+    if(o.d<800&&!warned.has(o.n+o.lat)){warned.add(o.n+o.lat);if(!al||o.d<al.d)al=o}
+    if(o.d>1500)warned.delete(o.n+o.lat);
+  });
+  if(al){
+    hud.classList.add('warn2');alertBar.style.display='block';
+    alertBar.textContent=`⚠️ 前方 ${(al.d/1000).toFixed(1)}km にオービス: ${al.n}`;
+    beep(990);setTimeout(()=>beep(990),250);speak(`前方${Math.round(al.d/1000*10)/10}キロ、オービス注意`);vibrate([200,100,200]);
+  }else if(bd<2000){hud.classList.add('warn1');hud.classList.remove('warn2');alertBar.style.display='none'}
+  else{hud.classList.remove('warn1','warn2');alertBar.style.display='none'}
+}
+function onErr(e){
+  document.getElementById('gpsStat').textContent='位置情報エラー: '+({1:'許可が拒否されました',2:'位置を取得できません',3:'タイムアウト'}[e.code]||e.message);
+}
+document.getElementById('btnGps').addEventListener('click',function(){
+  if(watchId!=null){navigator.geolocation.clearWatch(watchId);watchId=null;this.classList.remove('on');this.textContent='▶ 位置情報を開始';return}
+  if(!navigator.geolocation){document.getElementById('gpsStat').textContent='この端末は位置情報非対応';return}
+  this.classList.add('on');this.textContent='⏸ 位置情報 停止';
+  document.getElementById('gpsStat').textContent='許可を待っています…';
+  navigator.geolocation.getCurrentPosition(onPos,onErr,{enableHighAccuracy:true,timeout:15000});
+  watchId=navigator.geolocation.watchPosition(onPos,onErr,{enableHighAccuracy:true,timeout:20000,maximumAge:2000});
+});
+document.getElementById('btnVoice').addEventListener('click',function(){voiceOn=!voiceOn;this.classList.toggle('on',voiceOn);this.textContent=voiceOn?'🔊':'🔇';if(voiceOn){beep(660);speak('音声警告を開始します')}});
+document.getElementById('toggleList').addEventListener('click',()=>document.getElementById('list').classList.toggle('open'));
+document.getElementById('closeList').addEventListener('click',()=>document.getElementById('list').classList.remove('open'));
+document.getElementById('lst').addEventListener('click',e=>{const li=e.target.closest('li');if(!li)return;const o=ORBIS[+li.dataset.i];map.flyTo([o.lat,o.lng],15);o.marker.openPopup()});
+</script>
+</body>
+</html>
